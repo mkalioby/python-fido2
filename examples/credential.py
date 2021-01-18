@@ -26,85 +26,111 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 """
-Connects to the first FIDO device found, creates a new credential for it,
-and authenticates the credential. This works with both FIDO 2.0 devices as well
-as with U2F devices.
+Connects to the first FIDO device found (starts from USB, then looks into NFC),
+creates a new credential for it, and authenticates the credential.
+This works with both FIDO 2.0 devices as well as with U2F devices.
+On Windows, the native WebAuthn API will be used.
 """
 from __future__ import print_function, absolute_import, unicode_literals
 
 from fido2.hid import CtapHidDevice
-from fido2.client import Fido2Client
-from fido2.attestation import Attestation
+from fido2.client import Fido2Client, WindowsClient
+from fido2.server import Fido2Server
 from getpass import getpass
 import sys
+import ctypes
+
+use_prompt = False
+pin = None
+uv = "discouraged"
+
+if WindowsClient.is_available() and not ctypes.windll.shell32.IsUserAnAdmin():
+    # Use the Windows WebAuthn API if available, and we're not running as admin
+    client = WindowsClient("https://example.com")
+else:
+    # Locate a device
+    dev = next(CtapHidDevice.list_devices(), None)
+    if dev is not None:
+        print("Use USB HID channel.")
+        use_prompt = True
+    else:
+        try:
+            from fido2.pcsc import CtapPcscDevice
+
+            dev = next(CtapPcscDevice.list_devices(), None)
+            print("Use NFC channel.")
+        except Exception as e:
+            print("NFC channel search error:", e)
+
+    if not dev:
+        print("No FIDO device found")
+        sys.exit(1)
+
+    # Set up a FIDO 2 client using the origin https://example.com
+    client = Fido2Client(dev, "https://example.com")
+
+    # Prefer UV if supported
+    if client.info.options.get("uv"):
+        uv = "preferred"
+        print("Authenticator supports User Verification")
+    elif client.info.options.get("clientPin"):
+        # Prompt for PIN if needed
+        pin = getpass("Please enter PIN: ")
+    else:
+        print("PIN not set, won't use")
 
 
-# Locate a device
-dev = next(CtapHidDevice.list_devices(), None)
-if not dev:
-    print('No FIDO device found')
-    sys.exit(1)
+server = Fido2Server({"id": "example.com", "name": "Example RP"}, attestation="direct")
 
-# Set up a FIDO 2 client using the origin https://example.com
-client = Fido2Client(dev, 'https://example.com')
+user = {"id": b"user_id", "name": "A. User"}
 
 # Prepare parameters for makeCredential
-rp = {'id': 'example.com', 'name': 'Example RP'}
-user = {'id': b'user_id', 'name': 'A. User'}
-challenge = 'Y2hhbGxlbmdl'
-
-# Prompt for PIN if needed
-pin = None
-if client.info.options.get('clientPin'):
-    pin = getpass('Please enter PIN:')
+create_options, state = server.register_begin(
+    user, user_verification=uv, authenticator_attachment="cross-platform"
+)
 
 # Create a credential
-print('\nTouch your authenticator device now...\n')
-attestation_object, client_data = client.make_credential(
-    rp, user, challenge, pin=pin
+if use_prompt:
+    print("\nTouch your authenticator device now...\n")
+
+result = client.make_credential(create_options["publicKey"], pin=pin)
+
+# Complete registration
+auth_data = server.register_complete(
+    state, result.client_data, result.attestation_object
 )
+credentials = [auth_data.credential_data]
 
+print("New credential created!")
 
-print('New credential created!')
-
-print('CLIENT DATA:', client_data)
-print('ATTESTATION OBJECT:', attestation_object)
+print("CLIENT DATA:", result.client_data)
+print("ATTESTATION OBJECT:", result.attestation_object)
 print()
-print('CREDENTIAL DATA:', attestation_object.auth_data.credential_data)
+print("CREDENTIAL DATA:", auth_data.credential_data)
 
-# Verify signature
-verifier = Attestation.for_type(attestation_object.fmt)
-verifier().verify(
-    attestation_object.att_statement,
-    attestation_object.auth_data,
-    client_data.hash
-)
-print('Attestation signature verified!')
-
-credential = attestation_object.auth_data.credential_data
 
 # Prepare parameters for getAssertion
-challenge = 'Q0hBTExFTkdF'  # Use a new challenge for each call.
-allow_list = [{
-    'type': 'public-key',
-    'id': credential.credential_id
-}]
+request_options, state = server.authenticate_begin(credentials, user_verification=uv)
 
 # Authenticate the credential
-print('\nTouch your authenticator device now...\n')
+if use_prompt:
+    print("\nTouch your authenticator device now...\n")
 
-assertions, client_data = client.get_assertion(
-    rp['id'], challenge, allow_list, pin=pin
+# Only one cred in allowCredentials, only one response.
+result = client.get_assertion(request_options["publicKey"], pin=pin).get_response(0)
+
+# Complete authenticator
+server.authenticate_complete(
+    state,
+    credentials,
+    result.credential_id,
+    result.client_data,
+    result.authenticator_data,
+    result.signature,
 )
 
-print('Credential authenticated!')
+print("Credential authenticated!")
 
-assertion = assertions[0]  # Only one cred in allowList, only one response.
-
-print('CLIENT DATA:', client_data)
+print("CLIENT DATA:", result.client_data)
 print()
-print('ASSERTION DATA:', assertion)
-
-# Verify signature
-assertion.verify(client_data.hash, credential.public_key)
-print('Assertion signature verified!')
+print("AUTH DATA:", result.authenticator_data)

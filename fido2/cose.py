@@ -44,6 +44,7 @@ class CoseKey(dict):
     :param _: The COSE key paramters.
     :cvar ALGORITHM: COSE algorithm identifier.
     """
+
     ALGORITHM = None
 
     def verify(self, message, signature):
@@ -52,7 +53,7 @@ class CoseKey(dict):
         :param message: The message which was signed.
         :param signature: The signature to check.
         """
-        raise NotImplementedError('Signature verification not supported.')
+        raise NotImplementedError("Signature verification not supported.")
 
     @classmethod
     def from_cryptography_key(cls, public_key):
@@ -61,7 +62,7 @@ class CoseKey(dict):
         :param public_key: Either an EC or RSA public key.
         :return: A CoseKey.
         """
-        raise NotImplementedError('Creation from cryptography not supported.')
+        raise NotImplementedError("Creation from cryptography not supported.")
 
     @staticmethod
     def for_alg(alg):
@@ -95,7 +96,7 @@ class CoseKey(dict):
         """Create a CoseKey from a dict"""
         alg = cose.get(3)
         if not alg:
-            raise ValueError('COSE alg identifier must be provided.')
+            raise ValueError("COSE alg identifier must be provided.")
         return CoseKey.for_alg(alg)(cose)
 
     @staticmethod
@@ -114,26 +115,29 @@ class UnsupportedKey(CoseKey):
 
 class ES256(CoseKey):
     ALGORITHM = -7
+    _HASH_ALG = hashes.SHA256()
 
     def verify(self, message, signature):
         if self[-1] != 1:
-            raise ValueError('Unsupported elliptic curve')
+            raise ValueError("Unsupported elliptic curve")
         ec.EllipticCurvePublicNumbers(
             bytes2int(self[-2]), bytes2int(self[-3]), ec.SECP256R1()
         ).public_key(default_backend()).verify(
-            signature, message, ec.ECDSA(hashes.SHA256())
+            signature, message, ec.ECDSA(self._HASH_ALG)
         )
 
     @classmethod
     def from_cryptography_key(cls, public_key):
         pn = public_key.public_numbers()
-        return cls({
-            1: 2,
-            3: cls.ALGORITHM,
-            -1: 1,
-            -2: int2bytes(pn.x, 32),
-            -3: int2bytes(pn.y, 32)
-        })
+        return cls(
+            {
+                1: 2,
+                3: cls.ALGORITHM,
+                -1: 1,
+                -2: int2bytes(pn.x, 32),
+                -3: int2bytes(pn.y, 32),
+            }
+        )
 
     @classmethod
     def from_ctap1(cls, data):
@@ -142,58 +146,44 @@ class ES256(CoseKey):
         :param data: A 65 byte SECP256R1 public key.
         :return: A ES256 key.
         """
-        return cls({
-            1: 2,
-            3: cls.ALGORITHM,
-            -1: 1,
-            -2: data[1:33],
-            -3: data[33:65]
-        })
+        return cls({1: 2, 3: cls.ALGORITHM, -1: 1, -2: data[1:33], -3: data[33:65]})
 
 
 class RS256(CoseKey):
     ALGORITHM = -257
+    _HASH_ALG = hashes.SHA256()
 
     def verify(self, message, signature):
-        rsa.RSAPublicNumbers(
-            bytes2int(self[-2]), bytes2int(self[-1])
-        ).public_key(default_backend()).verify(
-            signature, message, padding.PKCS1v15(), hashes.SHA256()
-        )
+        rsa.RSAPublicNumbers(bytes2int(self[-2]), bytes2int(self[-1])).public_key(
+            default_backend()
+        ).verify(signature, message, padding.PKCS1v15(), self._HASH_ALG)
 
     @classmethod
     def from_cryptography_key(cls, public_key):
         pn = public_key.public_numbers()
-        return cls({
-            1: 3,
-            3: cls.ALGORITHM,
-            -1: int2bytes(pn.n),
-            -2: int2bytes(pn.e)
-        })
+        return cls({1: 3, 3: cls.ALGORITHM, -1: int2bytes(pn.n), -2: int2bytes(pn.e)})
 
 
 class PS256(CoseKey):
     ALGORITHM = -37
+    _HASH_ALG = hashes.SHA256()
 
     def verify(self, message, signature):
-        rsa.RSAPublicNumbers(
-            bytes2int(self[-2]), bytes2int(self[-1])
-        ).public_key(default_backend()).verify(
-            signature, message, padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ), hashes.SHA256()
+        rsa.RSAPublicNumbers(bytes2int(self[-2]), bytes2int(self[-1])).public_key(
+            default_backend()
+        ).verify(
+            signature,
+            message,
+            padding.PSS(
+                mgf=padding.MGF1(self._HASH_ALG), salt_length=padding.PSS.MAX_LENGTH
+            ),
+            self._HASH_ALG,
         )
 
     @classmethod
     def from_cryptography_key(cls, public_key):
         pn = public_key.public_numbers()
-        return cls({
-            1: 3,
-            3: cls.ALGORITHM,
-            -1: int2bytes(pn.n),
-            -2: int2bytes(pn.e)
-        })
+        return cls({1: 3, 3: cls.ALGORITHM, -1: int2bytes(pn.n), -2: int2bytes(pn.e)})
 
 
 class EdDSA(CoseKey):
@@ -201,19 +191,33 @@ class EdDSA(CoseKey):
 
     def verify(self, message, signature):
         if self[-1] != 6:
-            raise ValueError('Unsupported elliptic curve')
-        ed25519.Ed25519PublicKey.from_public_bytes(self[-2]).verify(
-            signature, message
-        )
+            raise ValueError("Unsupported elliptic curve")
+        ed25519.Ed25519PublicKey.from_public_bytes(self[-2]).verify(signature, message)
 
     @classmethod
     def from_cryptography_key(cls, public_key):
-        return cls({
-            1: 1,
-            3: cls.ALGORITHM,
-            -1: 6,
-            -2: public_key.public_bytes(
-                serialization.Encoding.Raw,
-                serialization.PublicFormat.Raw
-            ),
-        })
+        return cls(
+            {
+                1: 1,
+                3: cls.ALGORITHM,
+                -1: 6,
+                -2: public_key.public_bytes(
+                    serialization.Encoding.Raw, serialization.PublicFormat.Raw
+                ),
+            }
+        )
+
+
+class RS1(CoseKey):
+    ALGORITHM = -65535
+    _HASH_ALG = hashes.SHA1()  # nosec
+
+    def verify(self, message, signature):
+        rsa.RSAPublicNumbers(bytes2int(self[-2]), bytes2int(self[-1])).public_key(
+            default_backend()
+        ).verify(signature, message, padding.PKCS1v15(), self._HASH_ALG)
+
+    @classmethod
+    def from_cryptography_key(cls, public_key):
+        pn = public_key.public_numbers()
+        return cls({1: 3, 3: cls.ALGORITHM, -1: int2bytes(pn.n), -2: int2bytes(pn.e)})

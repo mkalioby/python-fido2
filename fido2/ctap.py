@@ -31,6 +31,12 @@ from enum import IntEnum, unique
 import abc
 
 
+@unique
+class STATUS(IntEnum):
+    PROCESSING = 1
+    UPNEEDED = 2
+
+
 class CtapDevice(abc.ABC):
     """
     CTAP-capable device. Subclasses of this should implement call, as well as
@@ -38,7 +44,7 @@ class CtapDevice(abc.ABC):
     """
 
     @abc.abstractmethod
-    def call(self, cmd, data=b'', event=None, on_keepalive=None):
+    def call(self, cmd, data=b"", event=None, on_keepalive=None):
         """Sends a command to the authenticator, and reads the response.
 
         :param cmd: The integer value of the command.
@@ -50,6 +56,15 @@ class CtapDevice(abc.ABC):
             consecutive keep-alive messages with the same status.
         :return: The response from the authenticator.
         """
+
+    def close(self):
+        """Close the device, releasing any held resources."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, typ, value, traceback):
+        self.close()
 
     @classmethod
     @abc.abstractmethod
@@ -110,13 +125,13 @@ class CtapError(Exception):
         VENDOR_LAST = 0xFF
 
         def __str__(self):
-            return '0x%02X - %s' % (self.value, self.name)
+            return "0x%02X - %s" % (self.value, self.name)
 
     def __init__(self, code):
         try:
             code = CtapError.ERR(code)
-            message = 'CTAP error: %s' % code
+            message = "CTAP error: %s" % code
         except ValueError:
-            message = 'CTAP error: 0x%02X' % code
+            message = "CTAP error: 0x%02X" % code
         self.code = code
         super(CtapError, self).__init__(message)

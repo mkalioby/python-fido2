@@ -31,21 +31,20 @@ This module contains various functions used throughout the rest of the project.
 """
 
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from threading import Timer, Event
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hmac, hashes
 from binascii import b2a_hex
-from numbers import Number
+from io import BytesIO
 import six
+import struct
 
 __all__ = [
-    'Timeout',
-    'websafe_encode',
-    'websafe_decode',
-    'sha256',
-    'hmac_sha256',
-    'bytes2int',
-    'int2bytes'
+    "websafe_encode",
+    "websafe_decode",
+    "sha256",
+    "hmac_sha256",
+    "bytes2int",
+    "int2bytes",
 ]
 
 
@@ -89,8 +88,8 @@ def int2bytes(value, minlen=-1):
     :return: The value encoded as a big endian byte string.
     """
     ba = []
-    while value > 0xff:
-        ba.append(0xff & value)
+    while value > 0xFF:
+        ba.append(0xFF & value)
         value >>= 8
     ba.append(value)
     ba.extend([0] * (minlen - len(ba)))
@@ -106,8 +105,8 @@ def websafe_decode(data):
     :return: The decoded bytes.
     """
     if isinstance(data, six.text_type):
-        data = data.encode('ascii')
-    data += b'=' * (-len(data) % 4)
+        data = data.encode("ascii")
+    data += b"=" * (-len(data) % 4)
     return urlsafe_b64decode(data)
 
 
@@ -117,33 +116,28 @@ def websafe_encode(data):
     :param data: The input to encode.
     :return: The encoded string.
     """
-    return urlsafe_b64encode(data).replace(b'=', b'').decode('ascii')
+    return urlsafe_b64encode(data).replace(b"=", b"").decode("ascii")
 
 
-class Timeout(object):
-    """Utility class for adding a timeout to an event.
+class ByteBuffer(BytesIO):
+    """BytesIO-like object with the ability to unpack values."""
 
-    :param time_or_event: A number, in seconds, or a threading.Event object.
-    :ivar event: The Event associated with the Timeout.
-    :ivar timer: The Timer associated with the Timeout, if any.
-    """
+    def unpack(self, fmt):
+        """Reads and unpacks a value from the buffer.
 
-    def __init__(self, time_or_event):
+        :param fmt: A struct format string yielding a single value.
+        :return: The unpacked value.
+        """
+        s = struct.Struct(fmt)
+        return s.unpack(self.read(s.size))[0]
 
-        if isinstance(time_or_event, Number):
-            self.event = Event()
-            self.timer = Timer(time_or_event,
-                               self.event.set)
-        else:
-            self.event = time_or_event
-            self.timer = None
-
-    def __enter__(self):
-        if self.timer:
-            self.timer.start()
-        return self.event
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.timer:
-            self.timer.cancel()
-            self.timer.join()
+    def read(self, size=-1):
+        """Like BytesIO.read(), but checks the number of bytes read and raises an error
+        if fewer bytes were read than expected.
+        """
+        data = super(ByteBuffer, self).read(size)
+        if size > 0 and len(data) != size:
+            raise ValueError(
+                "Not enough data to read (need: %d, had: %d)." % (size, len(data))
+            )
+        return data

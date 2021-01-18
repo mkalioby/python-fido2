@@ -40,15 +40,15 @@ import sys
 # Locate a device
 devs = list(CtapHidDevice.list_devices())
 if not devs:
-    print('No FIDO device found')
+    print("No FIDO device found")
     sys.exit(1)
 
-clients = [Fido2Client(d, 'https://example.com') for d in devs]
+clients = [Fido2Client(d, "https://example.com") for d in devs]
 
 # Prepare parameters for makeCredential
-rp = {'id': 'example.com', 'name': 'Example RP'}
-user = {'id': b'user_id', 'name': 'A. User'}
-challenge = 'Y2hhbGxlbmdl'
+rp = {"id": "example.com", "name": "Example RP"}
+user = {"id": b"user_id", "name": "A. User"}
+challenge = b"Y2hhbGxlbmdl"
 cancel = Event()
 attestation, client_data = None, None
 
@@ -58,7 +58,7 @@ has_prompted = False
 def on_keepalive(status):
     global has_prompted  # Don't prompt for each device.
     if status == STATUS.UPNEEDED and not has_prompted:
-        print('\nTouch your authenticator device now...\n')
+        print("\nTouch your authenticator device now...\n")
         has_prompted = True
 
 
@@ -66,7 +66,14 @@ def work(client):
     global attestation, client_data
     try:
         attestation, client_data = client.make_credential(
-            rp, user, challenge, timeout=cancel, on_keepalive=on_keepalive
+            {
+                "rp": rp,
+                "user": user,
+                "challenge": challenge,
+                "pubKeyCredParams": [{"type": "public-key", "alg": -7}],
+            },
+            event=cancel,
+            on_keepalive=on_keepalive,
         )
     except ClientError as e:
         if e.code != ClientError.ERR.TIMEOUT:
@@ -74,10 +81,10 @@ def work(client):
         else:
             return
     cancel.set()
-    print('New credential created!')
-    print('ATTESTATION OBJECT:', attestation)
+    print("New credential created!")
+    print("ATTESTATION OBJECT:", attestation)
     print()
-    print('CREDENTIAL DATA:', attestation.auth_data.credential_data)
+    print("CREDENTIAL DATA:", attestation.auth_data.credential_data)
 
 
 threads = []
@@ -90,4 +97,4 @@ for t in threads:
     t.join()
 
 if not cancel.is_set():
-    print('Operation timed out!')
+    print("Operation timed out!")
